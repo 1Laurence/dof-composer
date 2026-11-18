@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dof-composer"
+version = "0.1.0"
+description = "用单目深度与主体分割给全焦照片合成假景深"
+readme = "README.md"
+requires-python = ">=3.10"
+# SPDX 表达式写法（setuptools>=77 起推荐，旧的 license={text="MIT"} 将于 2027-02 失效）
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Laurence Lin" }]
+keywords = ["depth-of-field", "bokeh", "matting", "depth-estimation", "computer-vision"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+
+# torch 与 torchvision 刻意不写在这里：它们的 wheel 绑定了具体 CUDA 版本，
+# 由 pip 自动解析容易装错。请在 README 里按自己的环境单独安装。
+dependencies = [
+    "transformers>=4.39",
+    "Pillow>=10.0",
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+dof-composer = "dof_composer.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/1Laurence/dof-composer"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+# N806 允许函数内的变量名大写（如 H, W 这类矩阵维度约定）
+ignore = ["N806"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
