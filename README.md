@@ -222,11 +222,17 @@ dof-composer photo.jpg -w ./models/BiRefNet -d ./Depth-Anything-V2
 
 ```python
 import cv2
+import numpy as np
 from dof_composer import compute_sharpness_weight, compose_depth_of_field
 
 image = cv2.imread("photo.jpg")                     # BGR，uint8
-alpha = ...                                          # (H, W) float32, 值域 0~1
-depth = ...                                          # (H, W) float32, 值域 0~1
+
+# 关键：cv2.imread 读灰度图返回 uint8（0~255），必须转 float32 并归一化。
+# 直接传 uint8 会让 alpha=255 处的 1-alpha 变成 -254，权重崩到 -6 万量级，
+# 结果不是景深合成，而是一张高通残差图（边缘全是彩色噪点）。
+# 新版会在入口直接报错拦截，但正确写法一开始就该这么写。
+alpha = cv2.imread("alpha.png", cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
+depth = cv2.imread("depth.png", cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
 
 weight = compute_sharpness_weight(alpha, depth)      # (H, W)，1 = 保持清晰
 result = compose_depth_of_field(image, weight, blur_sigma=12.0)
@@ -236,12 +242,17 @@ cv2.imwrite("out.png", result)
 
 这一层**不 import torch**，装不装模型都无所谓，可以在纯 CPU 环境里跑。
 
+> **两个输入都必须是 `float32`、值域 `[0, 1]`。** 这是最容易踩的坑。
+> 8 位灰度图除以 255，16 位图除以 65535；深度模型（如 Depth-Anything）的原始输出
+> 还要先做 min-max 归一化。传错时函数会抛 `ValueError` 并直接告诉你该怎么改。
+
 ### 第 2 层 · 用现成模型，换成自己的合成
 
 想把两个模型当积木用，合成部分自己写：
 
 ```python
 import cv2
+import numpy as np
 from PIL import Image
 from pathlib import Path
 from dof_composer import SubjectSegmenter, DepthEstimator
@@ -265,11 +276,24 @@ depth = est.normalize(est.predict_relative_depth(bgr, input_size=518))
 est.release()
 
 # --- 自己的合成规则：只虚化最远的 35% ---
-far = (depth < 0.35).astype("float32")
+# 注意：depth 是归一化后的**值**，不是**分位数**。
+# 写 depth < 0.35 并不等于"最远的 35%"——实测在某张图上它覆盖了 60.6%。
+# 想按面积比例来，必须用分位数取阈值。
+threshold = float(np.quantile(depth, 0.35))
+
+# 加 0.15 宽的过渡带，否则"清晰/模糊"之间会有一条看得出来的硬边
+far = np.clip((threshold - depth) / 0.15, 0.0, 1.0)
 weight = np.maximum(1.0 - far, alpha)      # 主体永远清晰
+
 blurred = cv2.GaussianBlur(bgr, (0, 0), 9)
-result = np.clip(bgr * weight[..., None] + blurred * (1 - weight[..., None]), 0, 255).astype("uint8")
+# 用 round 而不是直接 astype：astype 是截断，254.9 会变成 254
+result = np.round(np.clip(
+    bgr * weight[..., None] + blurred * (1 - weight[..., None]), 0, 255
+)).astype("uint8")
 ```
+
+完整可跑版本见 [`examples/custom_compose.py`](examples/custom_compose.py)，
+支持 `--far-ratio`（按面积比例）与 `--threshold`（直接给阈值）两种用法。
 
 这个例子的效果就是 `docs/samples/` 里那张猫图：
 只让远处的书架和沙发糊掉，近处地板保持清晰，和默认的全深度虚化风格不同。

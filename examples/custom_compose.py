@@ -39,11 +39,25 @@ def parse_args() -> argparse.Namespace:
         "--encoder", default="vitl", help="深度模型规格（默认 vitl）"
     )
     parser.add_argument(
+        "--far-ratio",
+        type=float,
+        default=0.35,
+        help="虚化最远的这么多比例（0~1，默认 0.35）。"
+        "内部按深度的分位数取阈值，所以这个数字就是实际被虚化的面积占比。",
+    )
+    parser.add_argument(
         "--threshold",
         type=float,
-        default=0.20,
-        help="深度低于此值视为'太远'并虚化，越小虚化范围越小（默认 0.20，"
-        "在示例图上对应约 60%% 的区域被虚化）",
+        default=None,
+        help="直接指定深度阈值（低于此值算'太远'）。"
+        "指定后 --far-ratio 失效。注意这是深度的**值**不是分位数，"
+        "同一个数字在不同图片上对应的面积可能差很远。",
+    )
+    parser.add_argument(
+        "--feather",
+        type=float,
+        default=0.15,
+        help="过渡带宽度（默认 0.15）。0 会得到硬边，看得出一条'清晰/模糊'分界线。",
     )
     parser.add_argument("--blur-sigma", type=float, default=9.0)
     parser.add_argument("--device", default="cuda")
@@ -104,23 +118,44 @@ def main() -> int:
 
     # ---------------- 自定义合成 ----------------
     # 默认公式是 weight = alpha + (1-alpha)*depth，深度是连续参与的。
-    # 这里改成二值判断：只有"远到某个程度"才整体糊掉，
-    # 中间景深范围保持清晰，更接近真实光学的景深概念。
-    is_too_far = (depth < args.threshold).astype(np.float32)
-    weight = np.maximum(1.0 - is_too_far, alpha)  # alpha 拥有一票否决权
+    # 这里改成"只有远到某个程度才糊"：中间景深范围保持清晰，
+    # 更接近真实光学的景深概念。
+    #
+    # 两个容易写错的地方：
+    #
+    # 1) ``depth < 0.35`` 并不等于"最远的 35%"。depth 是归一化后的**值**，
+    #    不是**分位数**，同一个阈值在不同图片上覆盖的面积可能差一倍
+    #    （实测某张图 depth<0.35 覆盖 60.6%）。所以这里用分位数取阈值。
+    # 2) 直接二值化会在"清晰/模糊"之间留下一条能看出来的硬边。
+    #    用 feather 把跳变摊开成渐变，视觉上才像真的景深。
+    if args.threshold is not None:
+        threshold = args.threshold
+    else:
+        threshold = float(np.quantile(depth, args.far_ratio))
+
+    if args.feather > 0:
+        # depth 越小于 threshold，far 越接近 1（该糊）
+        far = np.clip((threshold - depth) / args.feather, 0.0, 1.0)
+    else:
+        far = (depth < threshold).astype(np.float32)
+
+    far = far.astype(np.float32)
+    weight = np.maximum(1.0 - far, alpha)  # alpha 拥有一票否决权
 
     blurred = cv2.GaussianBlur(bgr, (0, 0), args.blur_sigma)
     composite = bgr.astype(np.float32) * weight[..., None] + blurred.astype(
         np.float32
     ) * (1.0 - weight[..., None])
-    result = np.clip(composite, 0, 255).astype(np.uint8)
+    # 用 round 而不是直接 astype：astype 是截断，254.9 会变成 254，
+    # 大片平坦区域会系统性偏暗一个灰阶。
+    result = np.round(np.clip(composite, 0, 255)).astype(np.uint8)
 
     output_path = args.outdir / f"custom_{args.input.stem}.png"
     cv2.imwrite(str(output_path), result)
 
-    blurred_ratio = 100.0 * is_too_far.mean()
+    blurred_ratio = 100.0 * (far > 0.5).mean()
     print(f"已保存：{output_path}")
-    print(f"被虚化区域占全图 {blurred_ratio:.1f}%")
+    print(f"虚化阈值 {threshold:.4f}，被虚化区域占全图 {blurred_ratio:.1f}%")
     return 0
 
 
