@@ -50,8 +50,15 @@ class DepthEstimator:
                 encoder,
             )
 
+        raw_checkpoint = str(checkpoint)
         checkpoint = Path(checkpoint).expanduser().resolve()
         if not checkpoint.is_file():
+            from dof_composer.paths import describe_control_chars
+
+            diagnosis = describe_control_chars(raw_checkpoint)
+            if diagnosis:
+                raise FileNotFoundError(f"深度权重路径无效。\n{diagnosis}")
+
             raise FileNotFoundError(
                 f"找不到深度权重：{checkpoint}\n"
                 "请从 Depth-Anything-V2 的 README 下载对应 .pth 放到 checkpoints/ 下。"
@@ -146,8 +153,22 @@ class DepthEstimator:
             resolved = Path(source_root).expanduser().resolve()
             package_dir = resolved / "depth_anything_v2"
             if not package_dir.is_dir():
+                # 先排查"路径字符串本身被转义坏了"这种隐形错误：
+                # Windows 路径里 study\2.DepthAnything 的 \2 会被 Python 当成
+                # 八进制转义变成控制字符，路径悄悄少一个字符，报错时却看不出来。
+                from dof_composer.paths import describe_control_chars
+
+                diagnosis = describe_control_chars(str(source_root))
+                if diagnosis:
+                    raise ImportError(
+                        f"source_root 指向的仓库不存在。\n{diagnosis}"
+                    ) from None
+
                 raise ImportError(
-                    f"{resolved} 下没有 depth_anything_v2/ 目录，请确认 --da2-root 指向仓库根目录。"
+                    f"{resolved} 下没有 depth_anything_v2/ 目录，请确认 source_root "
+                    f"指向 Depth-Anything-V2 的仓库根目录（该目录下应能直接看到 "
+                    f"depth_anything_v2/ 与 checkpoints/）。\n"
+                    f"注意：.pth 是模型参数，depth_anything_v2/ 是模型结构代码，两者需要分别提供。"
                 ) from None
 
             # insert(0) 而非 append：确保优先用用户指定的这份代码

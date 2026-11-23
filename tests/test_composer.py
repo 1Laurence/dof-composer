@@ -65,6 +65,71 @@ class TestComputeSharpnessWeight:
             compute_sharpness_weight(alpha, depth)
 
 
+class TestInputValidation:
+    """锁住"传错值域必须炸"这条契约。
+
+    这几个测试来自一个真实事故：用户把 ``cv2.imread(..., IMREAD_GRAYSCALE)``
+    读出来的 **uint8 0~255** 直接传了进来。旧代码不报错，
+    算出 ``min=-46481`` 的权重，下游画出一张高通残差图 —— 边缘全是彩色噪点。
+    用户排查了很久才怀疑到读图方式上。
+
+    静默算错比报错恶劣，所以这里把拦截行为固定下来。
+    """
+
+    def test_uint8_alpha_is_rejected(self):
+        """uint8 的 alpha 必须报错，且提示里要给出正确写法。"""
+        alpha = np.zeros((4, 4), dtype=np.uint8)
+        depth = np.zeros((4, 4), dtype=np.float32)
+
+        with pytest.raises(ValueError, match="uint8"):
+            compute_sharpness_weight(alpha, depth)
+
+    def test_uint8_depth_is_rejected(self):
+        """深度图是 uint8 时同样拦截，不能只在 alpha 上做检查。"""
+        alpha = np.zeros((4, 4), dtype=np.float32)
+        depth = np.zeros((4, 4), dtype=np.uint8)
+
+        with pytest.raises(ValueError, match="uint8"):
+            compute_sharpness_weight(alpha, depth)
+
+    def test_float_out_of_range_is_rejected(self):
+        """浮点但值域是 0~255 时也要拦住（有人会显式 astype 却不归一化）。"""
+        alpha = np.full((4, 4), 255.0, dtype=np.float32)
+        depth = np.full((4, 4), 128.0, dtype=np.float32)
+
+        with pytest.raises(ValueError, match="超出"):
+            compute_sharpness_weight(alpha, depth)
+
+    def test_error_message_names_the_fix(self):
+        """报错必须能直接照做：包含 astype(float32) 与除以 255。"""
+        alpha = np.zeros((4, 4), dtype=np.uint8)
+        depth = np.zeros((4, 4), dtype=np.float32)
+
+        with pytest.raises(ValueError) as excinfo:
+            compute_sharpness_weight(alpha, depth)
+
+        message = str(excinfo.value)
+        assert "float32" in message
+        assert "/ 255.0" in message
+
+    def test_valid_float_input_passes(self):
+        """合法输入不能被误伤 —— 这道检查只挡错，不挡对。"""
+        alpha = np.zeros((4, 4), dtype=np.float32)
+        depth = np.full((4, 4), 0.5, dtype=np.float32)
+
+        weight = compute_sharpness_weight(alpha, depth)
+
+        np.testing.assert_allclose(weight, 0.5, atol=1e-6)
+
+    def test_compose_rejects_out_of_range_weight(self):
+        """权重图越界时，compose 也要拦，而不是画出一张残差图。"""
+        image = np.zeros((8, 8, 3), dtype=np.uint8)
+        weight = np.full((8, 8), 200.0, dtype=np.float32)
+
+        with pytest.raises(ValueError, match="超出"):
+            compose_depth_of_field(image, weight, blur_sigma=3.0)
+
+
 class TestComposeDepthOfField:
     """验证按权重混合原图与模糊图的行为。"""
 

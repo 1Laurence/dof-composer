@@ -16,6 +16,41 @@ logger = logging.getLogger(__name__)
 __all__ = ["compute_sharpness_weight", "compose_depth_of_field"]
 
 
+def _check_unit_range(name: str, arr: np.ndarray, hint: str = "") -> None:
+    """确认数组是 [0, 1] 的浮点数，否则给出能直接照做的报错。
+
+    为什么要有这道检查：``cv2.imread(path, cv2.IMREAD_GRAYSCALE)`` 返回的是
+    **uint8、值域 0~255**。直接丢进 ``alpha + (1-alpha)*depth`` 时，
+    ``alpha=255`` 会让 ``1-alpha = -254``，权重瞬间变成 -6 万这种量级，
+    下游混合出来的是一张高通残差图（边缘全是彩色噪点），而不是景深合成。
+
+    这种"静默算错"比直接报错恶劣得多 —— 调用方会先怀疑算法、怀疑参数、
+    怀疑模型，最后才怀疑到读图方式上。所以入口就把话说清楚。
+    """
+    if arr.dtype == np.uint8:
+        raise ValueError(
+            f"{name} 是 uint8（值域 0~255），但这里需要 float32 的 [0, 1]。\n"
+            f"{hint}"
+            f"正确写法：\n"
+            f"    {name} = cv2.imread(path, cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0\n"
+            f"如果手上是 PNG/TIF 的 8 位灰度图，除以 255 就够了；"
+            f"若是 0~65535 的 16 位图，请除以 65535。"
+        )
+
+    if not np.issubdtype(arr.dtype, np.floating):
+        raise TypeError(
+            f"{name} 的 dtype 是 {arr.dtype}，需要浮点类型（推荐 float32）。{hint}"
+        )
+
+    lo, hi = float(arr.min()), float(arr.max())
+    if lo < -1e-6 or hi > 1.0 + 1e-6:
+        raise ValueError(
+            f"{name} 的取值超出 [0, 1]：min={lo:.4f}, max={hi:.4f}。{hint}"
+            f"如果值域是 0~255，请先 /255.0；如果是深度模型的原始输出，"
+            f"请先做 min-max 归一化。"
+        )
+
+
 def compute_sharpness_weight(
     alpha: np.ndarray,
     normalized_depth: np.ndarray,
@@ -53,6 +88,9 @@ def compute_sharpness_weight(
             "无法逐像素运算。"
         )
 
+    _check_unit_range("alpha", alpha)
+    _check_unit_range("normalized_depth", normalized_depth)
+
     return alpha + (1.0 - alpha) * normalized_depth
 
 
@@ -80,6 +118,14 @@ def compose_depth_of_field(
     """
     if image_bgr.ndim != 3 or image_bgr.shape[2] != 3:
         raise ValueError(f"期望 (H, W, 3) 的 BGR 图像，实际形状 {image_bgr.shape}")
+
+    _check_unit_range("sharpness_weight", sharpness_weight)
+
+    if sharpness_weight.shape[:2] != image_bgr.shape[:2]:
+        raise ValueError(
+            f"权重图尺寸 {sharpness_weight.shape[:2]} 与原图 "
+            f"{image_bgr.shape[:2]} 不一致。二者必须逐像素对应。"
+        )
 
     blurred = cv2.GaussianBlur(image_bgr, (0, 0), blur_sigma)
 
