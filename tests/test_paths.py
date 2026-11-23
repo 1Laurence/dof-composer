@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from dof_composer.paths import _repair_path, describe_control_chars
 
 

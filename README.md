@@ -216,6 +216,15 @@ dof-composer photo.jpg -w ./models/BiRefNet -d ./Depth-Anything-V2
 
 不只有命令行。按你需要介入的深度，有三层用法。
 
+| 用法 | 需要装的包 |
+|---|---|
+| 第 1 层 · 只借合成公式 | `numpy` + `opencv-python` |
+| 第 2 / 3 层 · 用模型 | 上面这些 **+ `torch` + `transformers`** |
+| 命令行 `dof-composer` | 全部依赖（见 `pip install -e .`） |
+
+`import dof_composer` 本身不加载 torch —— 只用公式的话，在没装 torch 的环境里也能跑。
+真去取模型类时才会报缺依赖，报错里会直接给出安装命令。
+
 ### 第 1 层 · 只借合成公式（不需要模型，纯 numpy）
 
 如果你已经有自己的 alpha 和深度图，只想用这个项目的合成逻辑：
