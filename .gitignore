@@ -60,6 +60,14 @@ _dof_cmp_*.png
 _probe_*.py
 _test_*.py
 
+# 程序输出（用户可用 -o 指定任意目录）
+# 只挡默认的 out/ 不够：-o 自定义目录时产物会混进仓库。
+# 这几个名字是 CLI 的固定前缀，见 cli.py 的 OUTPUT_PREFIX_*。
+alpha_*.png
+depth_*.png
+depth_colormap_*.png
+dof_*.png
+
 # ---------- 编辑器与系统 ----------
 .vscode/
 .idea/

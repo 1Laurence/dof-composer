@@ -150,7 +150,9 @@ def render_depth_colormap(normalized_depth: np.ndarray) -> np.ndarray:
     rgb = matplotlib.cm.Spectral_r(normalized_depth)[:, :, :3]
     # matplotlib 给 RGB，cv2.imwrite 要 BGR
     bgr = rgb[:, :, ::-1]
-    return (bgr * 255).astype(np.uint8)
+    # 用 round 不用 astype：astype 是截断，1.0*255 附近的浮点误差会把
+    # 最远处压成 254，伪彩图整体偏暗一档，肉眼比对深度范围时会误判。
+    return np.round(bgr * 255).astype(np.uint8)
 
 
 def resolve_weights(args: argparse.Namespace) -> tuple[str, Path, Path]:
